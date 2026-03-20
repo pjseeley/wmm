@@ -1,65 +1,198 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState, useCallback } from "react";
+import GameCard from "@/components/GameCard";
+import type { MergedGame, ScoreGame, OddsGame } from "@/types";
+import { mergeGames } from "@/lib/mergeGames";
+
+const SCORE_REFRESH_MS = 60_000; // live score refresh interval
+
+export default function Dashboard() {
+  const [games, setGames] = useState<MergedGame[]>([]);
+  const [odds, setOdds] = useState<OddsGame[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [oddsError, setOddsError] = useState<string | null>(null);
+
+  const fetchOdds = useCallback(async () => {
+    try {
+      const res = await fetch("/api/odds");
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setOdds(data);
+        setOddsError(null);
+      } else {
+        setOddsError("Odds unavailable — add your ODDS_API_KEY to .env.local");
+      }
+    } catch {
+      setOddsError("Odds unavailable — add your ODDS_API_KEY to .env.local");
+    }
+  }, []);
+
+  const fetchScores = useCallback(async (currentOdds: OddsGame[]) => {
+    const res = await fetch("/api/scores");
+    if (!res.ok) throw new Error(`Scores API error: ${res.status}`);
+    const scores: ScoreGame[] = await res.json();
+    if (!Array.isArray(scores)) throw new Error("Unexpected scores response");
+    setGames(mergeGames(scores, currentOdds));
+    setLastUpdated(new Date());
+  }, []);
+
+  // Initial load: fetch odds + scores together
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const oddsRes = await fetch("/api/odds");
+        const oddsData = await oddsRes.json();
+        const freshOdds: OddsGame[] = Array.isArray(oddsData) ? oddsData : [];
+        if (!Array.isArray(oddsData)) {
+          setOddsError("Odds unavailable — add your ODDS_API_KEY to .env.local");
+        }
+        setOdds(freshOdds);
+
+        const scoresRes = await fetch("/api/scores");
+        const scores: ScoreGame[] = await scoresRes.json();
+        setGames(mergeGames(scores, freshOdds));
+        setLastUpdated(new Date());
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load data");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Live score auto-refresh every 60s (re-uses cached odds)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        await fetchScores(odds);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Refresh failed");
+      }
+    }, SCORE_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [fetchScores, odds]);
+
+  const liveGames = games.filter((g) => g.status.state === "in");
+  const upcomingGames = games.filter((g) => g.status.state === "pre");
+  const finalGames = games.filter((g) => g.status.state === "post");
+  const alertGames = games.filter((g) => g.upsetAlert);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <main className="min-h-screen bg-gray-950 text-gray-100">
+      {/* Header */}
+      <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">
+            🏀 Women&apos;s March Madness
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+          <p className="text-sm text-gray-400 mt-0.5">Betting Tracker</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        <div className="text-right">
+          {lastUpdated && (
+            <p className="text-xs text-gray-500">
+              Scores updated {lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
+          <button
+            onClick={async () => {
+              await fetchOdds();
+              await fetchScores(odds);
+            }}
+            className="mt-1 text-xs text-blue-400 hover:text-blue-300 underline"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Refresh
+          </button>
         </div>
-      </main>
-    </div>
+      </header>
+
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-8">
+        {/* Banners */}
+        {oddsError && (
+          <div className="bg-yellow-900/40 border border-yellow-700 rounded-lg px-4 py-3 text-sm text-yellow-300">
+            ⚠️ {oddsError}
+          </div>
+        )}
+        {error && (
+          <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-sm text-red-300">
+            ❌ {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="text-center py-20 text-gray-500">Loading games…</div>
+        )}
+
+        {/* Upset alerts */}
+        {alertGames.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-red-400 mb-3 flex items-center gap-2">
+              🚨 Upset Alerts
+              <span className="bg-red-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {alertGames.length}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {alertGames.map((g) => (
+                <GameCard key={g.id} game={g} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Live games */}
+        {liveGames.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse inline-block" />
+              Live Games
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {liveGames
+                .filter((g) => !g.upsetAlert)
+                .map((g) => (
+                  <GameCard key={g.id} game={g} />
+                ))}
+            </div>
+          </section>
+        )}
+
+        {/* Upcoming games */}
+        {upcomingGames.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-blue-400 mb-3">
+              Upcoming Games
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {upcomingGames.map((g) => (
+                <GameCard key={g.id} game={g} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Final games */}
+        {finalGames.length > 0 && (
+          <section>
+            <h2 className="text-lg font-semibold text-gray-500 mb-3">Final</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-60">
+              {finalGames.map((g) => (
+                <GameCard key={g.id} game={g} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!loading && games.length === 0 && !error && (
+          <div className="text-center py-20 text-gray-500">
+            No WNCAAB games found right now. Check back during the tournament!
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
