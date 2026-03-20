@@ -20,7 +20,7 @@ export async function GET() {
   url.searchParams.set("oddsFormat", "american");
 
   const res = await fetch(url.toString(), {
-    next: { revalidate: 300 }, // cache 5 min — pregame odds don't change fast
+    next: { revalidate: 43200 }, // cache 12h server-side — shared across all users on Vercel
   });
 
   if (!res.ok) {
